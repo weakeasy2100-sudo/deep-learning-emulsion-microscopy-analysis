@@ -1,62 +1,17 @@
-"""
-V6 — Detector Improvement Experiment.
+"""V6 — Trying to fix the classical detector for harder images.
 
-Compares the original classical detector (src/classical.py) with an improved
-detector that adds background subtraction, CLAHE, and local adaptive
-thresholding — all implemented with scikit-image, no new dependencies.
+V5 showed the Otsu detector misses a lot on v2/v2.1 — crops are off-centre
+and low-contrast. The root problem is that Otsu picks a single global
+threshold, which breaks when illumination is uneven or the background is
+noisy. This experiment tries three fixes on top of the existing pipeline:
+background subtraction (large-sigma Gaussian to flatten the illumination
+gradient), CLAHE (mild local contrast boost, conservative clip_limit so it
+doesn't amplify noise), and a local adaptive threshold instead of global Otsu.
+Also relaxes min diameter from 8 to 5 px to catch the small droplets in v2.1.
 
-IMPORTANT: src/classical.py is NOT modified.  This script is a standalone
-experiment only.  The improved detector is defined here and never replaces
-the original unless a future decision is made to do so.
-
-Why the improved detector may help
------------------------------------
-The v5 patch quality diagnosis showed that on v2/v2.1 datasets:
-  - detection rate drops significantly vs V1
-  - many patches have low std dev (low contrast)
-  - centre-surround ratio is near 1.0 (crops not centred on droplets)
-
-Root cause: Otsu global threshold fails under strong uneven illumination and
-high noise because the global histogram blurs the gap between background and
-droplet brightness.
-
-Improvements applied (in order, conservative by design):
-  1. Background subtraction (Gaussian sigma=50)
-     Removes low-frequency illumination gradients so the threshold step
-     sees a roughly uniform background instead of a gradient.
-  2. CLAHE contrast enhancement (clip_limit=0.03, conservative)
-     Adaptively boosts local contrast for low-visibility droplets.
-     The small clip_limit prevents noise amplification into false detections.
-  3. Mild Gaussian blur (sigma=1.5, same as original)
-     Noise reduction before thresholding.
-  4. Local adaptive threshold (block_size=51, replaces global Otsu)
-     Computes a threshold per 51×51 neighbourhood.  Robust to any
-     illumination variation that survived step 1.
-  5. Reduced min_diameter filter (5 px vs original 8 px)
-     Catches the smaller droplets in v2.1 (radius 3-8 px) without
-     relaxing the circularity filter.
-  6. All other filters kept identical to original (circularity ≥ 0.50,
-     max_diameter 100 px, same morphological cleanup, same clear_border).
-
-Higher detection count alone does NOT mean a better detector.
-This script reports both count AND patch quality metrics (std dev and
-centre-surround ratio) so the two can be judged together.
-
-Prerequisites
--------------
-    python src/generate_data.py
-    python src/generate_realistic_data.py
-    python src/generate_high_density_realistic_data.py
-
-Usage
------
-    python src/improve_detector.py
-
-Outputs  (no existing file is overwritten)
-------------------------------------------
-results/detector_comparison_overlay.png
-results/detector_comparison_counts.png
-results/improved_patch_quality_gallery.png
+src/classical.py is not touched — the improved detector lives only here.
+Higher detection count doesn't automatically mean better; the script reports
+patch quality metrics (std dev, centre-surround ratio) alongside counts.
 """
 
 import sys
@@ -78,6 +33,7 @@ from skimage.segmentation import clear_border
 from src.classical import (detect_droplets,
                             BLUR_SIGMA, MIN_AREA_PX,
                             MAX_DIAMETER_PX, MIN_CIRCULARITY)
+from src.utils     import crop_patch
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 PROJECT_ROOT         = Path(__file__).resolve().parent.parent
@@ -110,7 +66,7 @@ IMPR_CIRCLE_COLOR = "#FF8C00"   # orange
 BG_SIGMA            = 50     # sigma for background Gaussian estimation
 LOCAL_BLOCK_SIZE    = 51     # local threshold neighbourhood (must be odd)
 IMPROVED_MIN_DIAM   = 5      # px; original is 8 px
-CLAHE_CLIP          = 0.03   # conservative; 0.01=subtle, 0.10=aggressive
+CLAHE_CLIP          = 0.03   # 0.1 was way too aggressive, amplified noise
 
 
 # ── improved detector ─────────────────────────────────────────────────────────
@@ -185,31 +141,6 @@ def detect_droplets_improved(img):
     regions     = [r for r in all_regions if _is_valid_droplet_improved(r)]
 
     return regions, binary
-
-
-# ── patch crop ────────────────────────────────────────────────────────────────
-
-def _crop_patch(img, cy, cx, size):
-    """Square crop centred at (cy, cx), reflect-padded if needed."""
-    half = size // 2
-    r0, r1 = cy - half, cy + half
-    c0, c1 = cx - half, cx + half
-
-    pad_top    = max(0, -r0)
-    pad_bottom = max(0, r1 - img.shape[0])
-    pad_left   = max(0, -c0)
-    pad_right  = max(0, c1 - img.shape[1])
-
-    if pad_top or pad_bottom or pad_left or pad_right:
-        img = np.pad(img,
-                     ((pad_top, pad_bottom), (pad_left, pad_right)),
-                     mode="reflect")
-        cy += pad_top
-        cx += pad_left
-        r0, r1 = cy - half, cy + half
-        c0, c1 = cx - half, cx + half
-
-    return img[r0:r1, c0:c1]
 
 
 # ── patch quality statistics ──────────────────────────────────────────────────
@@ -287,7 +218,7 @@ def _compare_on_dataset(raw_dir, metadata_csv, tag, overlay_rng):
         orig_n_det += len(orig_regions)
         for reg in orig_regions:
             cy, cx = int(reg.centroid[0]), int(reg.centroid[1])
-            patch  = _crop_patch(img, cy, cx, PATCH_SIZE)
+            patch  = crop_patch(img, cy, cx, PATCH_SIZE)
             if patch.shape == (PATCH_SIZE, PATCH_SIZE):
                 orig_patches.append(patch)
 
@@ -296,7 +227,7 @@ def _compare_on_dataset(raw_dir, metadata_csv, tag, overlay_rng):
         impr_n_det += len(impr_regions)
         for reg in impr_regions:
             cy, cx = int(reg.centroid[0]), int(reg.centroid[1])
-            patch  = _crop_patch(img, cy, cx, PATCH_SIZE)
+            patch  = crop_patch(img, cy, cx, PATCH_SIZE)
             if patch.shape == (PATCH_SIZE, PATCH_SIZE):
                 impr_patches.append(patch)
 

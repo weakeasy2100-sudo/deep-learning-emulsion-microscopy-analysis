@@ -1,19 +1,5 @@
-"""
-Classical image analysis module — Step 2.
-
-Pipeline
---------
-1. Grayscale input  (images are already single-channel)
-2. Gaussian blur    (reduces noise before thresholding)
-3. Otsu threshold   (automatic global threshold)
-4. Remove small objects + fill holes
-5. Label connected components
-6. Measure region properties  (area, equivalent_diameter, solidity)
-
-Outputs
--------
-results/classical_detection_overlay.png
-results/droplet_size_distribution.png
+"""Classical droplet detection using Otsu thresholding + connected components.
+Outputs a detection overlay and size distribution plots.
 """
 
 from pathlib import Path
@@ -41,26 +27,14 @@ N_OVERLAY_IMGS   = 9     # images shown in the detection overlay grid
 # post-detection filters — keep only plausible droplets
 MIN_DIAMETER_PX  = 8    # smaller than this is noise (image is 256×256 px)
 MAX_DIAMETER_PX  = 100  # larger than this is a background artifact
-MIN_CIRCULARITY  = 0.50 # 4π·area/perimeter²; circles = 1.0, noise → 0
+MIN_CIRCULARITY  = 0.50 # lower values let in too much noise
 
 CLASS_ORDER = ["small", "medium", "large"]
 COLORS      = {"small": "#4C9BE8", "medium": "#E8A44C", "large": "#5EBD70"}
 
 
 def detect_droplets(img):
-    """
-    Run the classical detection pipeline on one grayscale image.
-
-    Parameters
-    ----------
-    img : np.ndarray  uint8 or float, shape (H, W)
-
-    Returns
-    -------
-    regions : list of skimage RegionProperties
-        Each region represents one detected droplet-like blob.
-    binary  : np.ndarray bool  (thresholded mask, for visualisation)
-    """
+    """Run Otsu detection on one image. Returns (regions, binary_mask)."""
     blurred = filters.gaussian(img, sigma=BLUR_SIGMA, preserve_range=True)
 
     # Otsu finds the optimal global threshold automatically
@@ -99,20 +73,7 @@ def _is_valid_droplet(reg):
 
 
 def analyse_dataset(n_samples=None):
-    """
-    Run detect_droplets on images from metadata.csv.
-
-    Parameters
-    ----------
-    n_samples : int or None
-        If set, analyse only the first n_samples images (useful for quick tests).
-
-    Returns
-    -------
-    results_df : pd.DataFrame
-        One row per detected blob, with columns:
-        image_filename, size_class, area_px, equiv_diameter_px, solidity
-    """
+    """Detect droplets in all images from metadata.csv. Returns a DataFrame with one row per blob."""
     meta = pd.read_csv(METADATA_CSV)
     if n_samples is not None:
         meta = meta.head(n_samples)

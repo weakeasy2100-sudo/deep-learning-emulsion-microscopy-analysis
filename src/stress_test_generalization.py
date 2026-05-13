@@ -1,58 +1,8 @@
+"""Test whether the V1-trained SimpleCNN generalises to harder synthetic datasets.
+Run: python src/stress_test_generalization.py
 """
-V3 — Generalization Stress Test.
 
-Tests whether the SimpleCNN trained on clean v1 synthetic data generalises
-to harder v2 (realistic) and v2.1 (high-density) synthetic datasets.
-
-IMPORTANT — what this test actually measures
---------------------------------------------
-The evaluation covers the FULL pipeline:
-
-    classical detection  →  patch cropping  →  SimpleCNN classification
-
-A performance drop on realistic / high-density data may be caused by ANY
-combination of the following — not necessarily the CNN classifier alone:
-
-  1. Classical detector failure
-       Otsu thresholding is confused by stronger noise, weaker droplet
-       contrast, or uneven illumination → droplets are missed, merged,
-       or incorrectly bounded.
-
-  2. Imperfect patch cropping
-       Inaccurate centroid estimates (from a bad detection) produce
-       off-centre 64×64 crops that the CNN has never seen during training.
-
-  3. Domain shift
-       The CNN was trained exclusively on clean, high-contrast v1 patches.
-       Noisy, low-contrast, or partially overlapping patches from v2/v2.1
-       fall outside the training distribution.
-
-  4. CNN classification limitation
-       Even with a perfect crop, the model may lack capacity to classify
-       small or low-contrast droplets correctly.
-
-This script does NOT retrain the model, modify any v1/v2/v2.1 source files,
-or write anything to data/patches/.
-
-Prerequisites
--------------
-    python src/generate_data.py                          # v1 images
-    python src/classical.py                              # v1 analysis
-    python src/train_classifier.py                       # → results/simple_cnn.pth
-    python src/generate_realistic_data.py                # v2 images
-    python src/generate_high_density_realistic_data.py   # v2.1 images
-
-Usage
------
-    python src/stress_test_generalization.py
-
-Outputs (new files only — no existing result figures are overwritten)
--------
-results/stress_test_accuracy_comparison.png
-results/stress_test_confusion_matrix_realistic.png
-results/stress_test_confusion_matrix_high_density.png
-results/stress_test_prediction_examples.png
-"""
+# Note: accuracy reflects the full pipeline (detection + cropping + CNN), not CNN alone
 
 import sys
 from pathlib import Path
@@ -76,6 +26,7 @@ from sklearn.metrics import confusion_matrix, classification_report
 from src.classical import detect_droplets, CLASS_ORDER
 from src.dataset   import make_splits, PATCHES_DIR, CLASS_TO_IDX, IDX_TO_CLASS
 from src.model     import SimpleCNN, evaluate_model
+from src.utils     import crop_patch
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 PROJECT_ROOT         = Path(__file__).resolve().parent.parent
@@ -89,43 +40,12 @@ HIGH_DENSITY_CSV     = PROJECT_ROOT / "data" / "high_density_metadata.csv"
 PATCH_SIZE = 64
 BATCH_SIZE = 32
 
-_PIPELINE_NOTE = """\
-NOTE: results reflect the FULL pipeline:
-  classical detection → patch cropping → SimpleCNN classification
-A drop in accuracy may be caused by classical detector failure, imperfect
-patch cropping, domain shift, or CNN classification limitations — or any
-combination. It cannot be attributed to the CNN alone."""
+_PIPELINE_NOTE = "Accuracy = full pipeline (detection → crop → CNN), not CNN alone."
 
 _transform = T.Compose([
     T.ToTensor(),
     T.Normalize(mean=[0.5], std=[0.5]),
 ])
-
-
-# ── patch crop (mirrors dataset.py _crop_patch; reimplemented here to avoid
-#    importing a private function from another module) ─────────────────────────
-
-def _crop_patch(img, cy, cx, size):
-    """Square crop of `size` centred at (cy, cx), reflect-padded if needed."""
-    half = size // 2
-    r0, r1 = cy - half, cy + half
-    c0, c1 = cx - half, cx + half
-
-    pad_top    = max(0, -r0)
-    pad_bottom = max(0, r1 - img.shape[0])
-    pad_left   = max(0, -c0)
-    pad_right  = max(0, c1 - img.shape[1])
-
-    if pad_top or pad_bottom or pad_left or pad_right:
-        img = np.pad(img,
-                     ((pad_top, pad_bottom), (pad_left, pad_right)),
-                     mode="reflect")
-        cy += pad_top
-        cx += pad_left
-        r0, r1 = cy - half, cy + half
-        c0, c1 = cx - half, cx + half
-
-    return img[r0:r1, c0:c1]
 
 
 # ── in-memory dataset ─────────────────────────────────────────────────────────
@@ -189,7 +109,7 @@ def _build_in_memory_patches(raw_dir, metadata_csv, tag):
         int_label = CLASS_TO_IDX[row["size_class"]]
         for reg in regions:
             cy, cx = int(reg.centroid[0]), int(reg.centroid[1])
-            patch  = _crop_patch(img, cy, cx, PATCH_SIZE)
+            patch  = crop_patch(img, cy, cx, PATCH_SIZE)
             if patch.shape != (PATCH_SIZE, PATCH_SIZE):
                 continue
             pairs.append((patch, int_label))
@@ -239,9 +159,7 @@ def _save_accuracy_comparison(acc_dict):
 
     fig.text(
         0.5, -0.05,
-        "Accuracy reflects the full pipeline: "
-        "classical detection → patch cropping → SimpleCNN classification\n"
-        "A drop does not indicate CNN failure alone — see terminal output for details.",
+        "Accuracy = full pipeline: detection → crop → CNN (not CNN alone)",
         ha="center", fontsize=8.5, color="#555555", style="italic",
     )
 

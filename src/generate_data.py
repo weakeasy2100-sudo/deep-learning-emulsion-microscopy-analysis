@@ -1,15 +1,6 @@
-"""
-Synthetic emulsion-like microscopy image generator.
-
-Outputs
--------
-data/raw/                 150 PNG files  (50 per size class)
-data/metadata.csv         one row per image with labels and stats
-results/synthetic_examples.png   3 x 5 preview grid
-
-Usage
------
-    python src/generate_data.py
+"""Generate synthetic emulsion-like microscopy images.
+150 images total (50 per size class: small / medium / large).
+Run: python src/generate_data.py
 """
 
 import csv
@@ -112,19 +103,7 @@ def _place_droplets(canvas, size_class, n, rng):
 # ── public API ────────────────────────────────────────────────────────────────
 
 def generate_image(size_class, seed):
-    """
-    Generate one synthetic emulsion image.
-
-    Parameters
-    ----------
-    size_class : str   one of 'small', 'medium', 'large'
-    seed       : int   random seed for full reproducibility
-
-    Returns
-    -------
-    img     : np.ndarray  uint8, shape (256, 256)
-    droplets: list of (cy, cx, radius)
-    """
+    """Generate one synthetic image. Returns (img, droplets) where img is uint8 256×256."""
     rng    = np.random.default_rng(seed)
     canvas = _make_background(rng)
     n      = int(rng.integers(N_DROPLETS_MIN, N_DROPLETS_MAX + 1))

@@ -1,5 +1,4 @@
-"""
-SimpleCNN classifier for emulsion droplet size classification — Step 3.
+"""SimpleCNN for emulsion droplet size classification.
 
 Architecture (64×64 grayscale input):
     Conv(1→16, 3×3, pad=1) → ReLU → MaxPool(2)   # → 16 × 32 × 32
@@ -19,6 +18,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 
+# tried 3 conv layers but it overfit on this small dataset, 2 works better
 class SimpleCNN(nn.Module):
     """Two-layer convolutional classifier for 64×64 grayscale patches."""
 
@@ -47,13 +47,7 @@ class SimpleCNN(nn.Module):
 # ── training ──────────────────────────────────────────────────────────────────
 
 def train_model(model, train_loader, val_loader, n_epochs=20, lr=1e-3, device="cpu"):
-    """
-    Train the model and return per-epoch metrics.
-
-    Returns
-    -------
-    history : dict with keys 'train_loss', 'val_loss', 'val_acc'
-    """
+    """Train and return history dict (train_loss, val_loss, val_acc per epoch)."""
     model.to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)

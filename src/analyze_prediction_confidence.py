@@ -1,54 +1,12 @@
-"""
-V7 — Confidence-Aware Filtering and Uncertainty Analysis.
+"""V7 — Looking at how confident the model actually is on each dataset.
 
-Instead of forcing the model to classify every patch and report a single
-accuracy number, this script separates predictions into:
-  - high-confidence  (max softmax probability ≥ 0.80)
-  - uncertain        (max softmax probability < 0.80)
-
-This matters because:
-  1. Without human-labelled ground truth on real microscopy images, reported
-     accuracy on synthetic data has limited generalisability.
-  2. A model can be confidently wrong — high softmax does not mean correct.
-  3. Flagging uncertain predictions gives a practical workflow: submit
-     high-confidence results automatically, route uncertain cases for human
-     review or detector improvement.
-
-⚠  IMPORTANT CAVEAT — repeated throughout this script:
-   "High confidence" here means the model's own certainty about its
-   prediction, not validated accuracy against a human-labelled reference.
-   These numbers describe the model's behaviour, not its correctness on
-   real microscopy images.
-
-Models used (whichever are available):
-  results/simple_cnn.pth        (V1-only model, required)
-  results/simple_cnn_mixed.pth  (mixed-data model, optional)
-
-Patch sources:
-  V1 clean        — data/patches/ (already extracted by train_classifier.py)
-  V2 realistic    — data/realistic_raw/ (classical detection, in-memory)
-  V2.1 high-density — data/high_density_raw/ (classical detection, in-memory)
-
-Prerequisites
--------------
-    python src/generate_data.py
-    python src/classical.py
-    python src/train_classifier.py            (creates data/patches/ and simple_cnn.pth)
-    python src/generate_realistic_data.py
-    python src/generate_high_density_realistic_data.py
-    # optional:
-    python src/train_mixed_classifier.py      (creates simple_cnn_mixed.pth)
-
-Usage
------
-    python src/analyze_prediction_confidence.py
-
-Outputs  (no existing file is overwritten)
-------------------------------------------
-results/confidence_distribution.png
-results/high_vs_low_confidence_examples.png
-results/uncertain_patch_gallery.png
-results/quality_confidence_relationship.png
+Instead of just reporting one accuracy number, this script splits predictions
+into high-confidence (softmax ≥ 0.80) and uncertain (< 0.80) and checks
+whether confidence tracks patch quality at all. The important caveat is that
+high confidence just means the model is certain about its output — it doesn't
+mean the prediction is correct, since there's no human-labelled ground truth
+to compare against. Both the V1-only model and the mixed model (if available)
+are evaluated across all three datasets.
 """
 
 import sys
@@ -71,6 +29,7 @@ import torchvision.transforms as T
 from src.classical import detect_droplets
 from src.dataset   import PATCHES_DIR, CLASS_ORDER, IDX_TO_CLASS
 from src.model     import SimpleCNN
+from src.utils     import crop_patch
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 PROJECT_ROOT         = Path(__file__).resolve().parent.parent
@@ -100,37 +59,12 @@ DS_COLORS = {
 # colors by predicted class index (same palette as project-wide)
 CLASS_COLORS = {0: "#4C9BE8", 1: "#E8A44C", 2: "#5EBD70"}
 
-_CAVEAT = (
-    "⚠  High confidence = model certainty, NOT validated accuracy.\n"
-    "   A confidently-wrong prediction is possible without ground-truth labels."
-)
+_CAVEAT = "High confidence = model certainty, not validated accuracy."
 
 _infer_transform = T.Compose([
     T.ToTensor(),
     T.Normalize(mean=[0.5], std=[0.5]),
 ])
-
-
-# ── patch crop ────────────────────────────────────────────────────────────────
-
-def _crop_patch(img, cy, cx, size):
-    """Square crop centred at (cy, cx), reflect-padded if needed."""
-    half = size // 2
-    r0, r1 = cy - half, cy + half
-    c0, c1 = cx - half, cx + half
-    pad_top    = max(0, -r0)
-    pad_bottom = max(0, r1 - img.shape[0])
-    pad_left   = max(0, -c0)
-    pad_right  = max(0, c1 - img.shape[1])
-    if pad_top or pad_bottom or pad_left or pad_right:
-        img = np.pad(img,
-                     ((pad_top, pad_bottom), (pad_left, pad_right)),
-                     mode="reflect")
-        cy += pad_top
-        cx += pad_left
-        r0, r1 = cy - half, cy + half
-        c0, c1 = cx - half, cx + half
-    return img[r0:r1, c0:c1]
 
 
 # ── patch collection ──────────────────────────────────────────────────────────
@@ -160,7 +94,7 @@ def _extract_patches_in_memory(raw_dir, metadata_csv, ds_label, tag):
         regions, _ = detect_droplets(img)
         for reg in regions:
             cy, cx = int(reg.centroid[0]), int(reg.centroid[1])
-            patch  = _crop_patch(img, cy, cx, PATCH_SIZE)
+            patch  = crop_patch(img, cy, cx, PATCH_SIZE)
             if patch.shape == (PATCH_SIZE, PATCH_SIZE):
                 pairs.append((patch, ds_label))
     print(f"  [{tag}]  {len(meta)} images → {len(pairs)} patches")
@@ -630,24 +564,8 @@ def _print_summary(all_records, model_labels):
             )
 
     print(f"\n{LINE}")
-    print("⚠  IMPORTANT CAVEAT")
-    print(LINE)
-    print(
-        "\n  'High confidence' means the model's own certainty about its prediction,\n"
-        "  not validated accuracy against human-labelled ground truth.\n"
-        "\n"
-        "  A model can be CONFIDENTLY WRONG — softmax probability reflects the\n"
-        "  model's internal distribution, not an external quality standard.\n"
-        "\n"
-        "  Practical use of this analysis:\n"
-        "    • High-confidence patches (conf ≥ {:.0%}) — suitable for automated\n"
-        "      processing; still require validation on real microscopy images\n"
-        "      before any production use.\n"
-        "    • Uncertain patches (conf < {:.0%}) — flag for human review, detector\n"
-        "      improvement (v6), or exclusion from downstream analysis.\n"
-        "    • This is not a substitute for a human-labelled ground-truth dataset.\n"
-        .format(HIGH_CONF_THRESHOLD, HIGH_CONF_THRESHOLD)
-    )
+    print(f"Note: high confidence (≥{HIGH_CONF_THRESHOLD:.0%}) = model certainty, not validated accuracy.")
+    print("Confident-but-wrong predictions are possible. Flag uncertain patches for human review.")
     print(LINE + "\n")
 
 

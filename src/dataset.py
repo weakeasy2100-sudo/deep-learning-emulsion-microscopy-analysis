@@ -1,21 +1,5 @@
-"""
-Patch extraction and PyTorch Dataset — Step 3.
-
-Crops 64×64 grayscale patches around each detected droplet and
-saves them under data/patches/<size_class>/ for use by the CNN.
-
-Public API (imported by train_classifier.py and extension scripts)
-------------------------------------------------------------------
-build_patch_dataset()   extract and save all patches from data/raw/
-make_splits()           stratified train / val / test split (seed=42)
-EmulsionPatchDataset    PyTorch Dataset: loads (patch, label) pairs
-CLASS_TO_IDX            {"small": 0, "medium": 1, "large": 2}
-IDX_TO_CLASS            {0: "small", 1: "medium", 2: "large"}
-PATCHES_DIR             Path to data/patches/
-
-Usage
------
-    python src/dataset.py
+"""Extract 64×64 patches around detected droplets and build a PyTorch Dataset.
+Saves patches to data/patches/<class>/ for the CNN to load.
 """
 
 import shutil
@@ -35,6 +19,7 @@ from torch.utils.data import Dataset
 import torchvision.transforms as T
 
 from src.classical import detect_droplets, CLASS_ORDER
+from src.utils     import crop_patch
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PATCHES_DIR  = PROJECT_ROOT / "data" / "patches"
@@ -48,36 +33,8 @@ IDX_TO_CLASS = {i: cls for cls, i in CLASS_TO_IDX.items()}
 
 # ── patch extraction ──────────────────────────────────────────────────────────
 
-def _crop_patch(img, cy, cx, size):
-    """Square crop of `size` centred at (cy, cx), with reflect-padding if needed."""
-    half = size // 2
-    r0, r1 = cy - half, cy + half
-    c0, c1 = cx - half, cx + half
-
-    pad_top    = max(0, -r0)
-    pad_bottom = max(0, r1 - img.shape[0])
-    pad_left   = max(0, -c0)
-    pad_right  = max(0, c1 - img.shape[1])
-
-    if pad_top or pad_bottom or pad_left or pad_right:
-        img = np.pad(img, ((pad_top, pad_bottom), (pad_left, pad_right)), mode="reflect")
-        cy += pad_top
-        cx += pad_left
-        r0, r1 = cy - half, cy + half
-        c0, c1 = cx - half, cx + half
-
-    return img[r0:r1, c0:c1]
-
-
 def build_patch_dataset():
-    """
-    Extract droplet patches from all images listed in metadata.csv.
-    Clears any previous patches first so re-runs are idempotent.
-
-    Returns
-    -------
-    counts : dict  {size_class: n_patches_saved}
-    """
+    """Extract patches from all images in metadata.csv. Returns dict of patch counts per class."""
     # clear previous patches to avoid duplicates on re-run
     if PATCHES_DIR.exists():
         shutil.rmtree(PATCHES_DIR)
@@ -95,7 +52,7 @@ def build_patch_dataset():
 
         for drop_i, reg in enumerate(regions):
             cy, cx = int(reg.centroid[0]), int(reg.centroid[1])
-            patch  = _crop_patch(img, cy, cx, PATCH_SIZE)
+            patch  = crop_patch(img, cy, cx, PATCH_SIZE)
             if patch.shape != (PATCH_SIZE, PATCH_SIZE):
                 continue
             out = PATCHES_DIR / cls / f"{stem}_drop{drop_i:02d}.png"
@@ -114,10 +71,7 @@ _default_transform = T.Compose([
 
 
 class EmulsionPatchDataset(Dataset):
-    """
-    Loads patches from a list of (Path, int_label) pairs.
-    Each patch is a 64×64 grayscale image converted to a normalised tensor.
-    """
+    """PyTorch Dataset — loads 64×64 grayscale patches from (path, label) pairs."""
 
     def __init__(self, file_label_pairs, transform=None):
         self.pairs     = file_label_pairs
@@ -133,13 +87,7 @@ class EmulsionPatchDataset(Dataset):
 
 
 def make_splits(val_frac=0.15, test_frac=0.15, seed=42):
-    """
-    Collect all saved patches and split into stratified train / val / test sets.
-
-    Returns
-    -------
-    train_ds, val_ds, test_ds : EmulsionPatchDataset
-    """
+    """Stratified train / val / test split of saved patches. Returns three EmulsionPatchDataset objects."""
     rng    = np.random.default_rng(seed)
     splits = {"train": [], "val": [], "test": []}
 

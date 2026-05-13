@@ -1,54 +1,13 @@
-"""
-V5 — Patch Quality Diagnosis.
+"""V5 — Diagnosing why accuracy drops on harder datasets.
 
-Analyses the quality of droplet patches extracted from v1 (clean), v2
-(realistic), and v2.1 (high-density) synthetic datasets using the existing
-classical detector and crop pipeline.
-
-Goal: determine whether the accuracy gap observed in v3/v4 is driven mainly
-by the classical detection / patch-cropping step (pipeline bottleneck) or by
-the CNN classifier alone (domain shift).
-
-This script does NOT load or retrain any model.
-No existing result files are overwritten.
-
-What is measured per patch
---------------------------
-  mean_brightness        — overall pixel mean.
-                           Very low values suggest the detector locked onto a
-                           background region rather than a droplet.
-
-  std_dev                — pixel standard deviation (contrast proxy).
-                           Low std means the patch is nearly uniform noise;
-                           the CNN has little texture signal to work with.
-
-  center_surround_ratio  — mean of the central 16×16 px divided by the mean
-                           of the full 64×64 px.
-                           A correctly-centred droplet crop should have a
-                           brighter interior → ratio clearly > 1.0.
-                           Values near 1.0 indicate the crop is NOT centred
-                           on a droplet — a direct sign of detection / cropping
-                           failure that the CNN cannot compensate for.
-
-Detection rate (patches found per source image) is also reported as a proxy
-for how reliably the classical detector finds droplets on each dataset.
-
-Prerequisites
--------------
-    python src/generate_data.py
-    python src/classical.py
-    python src/train_classifier.py                           (creates data/patches/)
-    python src/generate_realistic_data.py
-    python src/generate_high_density_realistic_data.py
-
-Usage
------
-    python src/analyze_patch_quality.py
-
-Outputs  (no existing file is overwritten)
-------------------------------------------
-results/patch_quality_gallery.png
-results/patch_quality_statistics.png
+V3 and V4 showed a big accuracy gap on v2/v2.1 data, but I couldn't tell
+if that was the CNN's fault or the classical detector's. This script checks
+the quality of patches the detector actually hands to the CNN — brightness,
+contrast (std dev), and whether the crop is centred on a real droplet
+(centre-surround ratio > 1.0 means the centre is brighter than the edges,
+which is what you'd expect for a correctly-detected droplet). Also reports
+how many patches per image the detector finds on each dataset. No model is
+loaded or retrained here.
 """
 
 import sys
@@ -68,6 +27,7 @@ from skimage.io import imread
 
 from src.classical import detect_droplets
 from src.dataset   import PATCHES_DIR
+from src.utils     import crop_patch
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 PROJECT_ROOT         = Path(__file__).resolve().parent.parent
@@ -89,31 +49,6 @@ DS_COLORS = {
     "V2 realistic":       "#E8A44C",
     "V2.1 high-density":  "#E86B6B",
 }
-
-
-# ── patch crop (local copy — mirrors dataset.py _crop_patch) ──────────────────
-
-def _crop_patch(img, cy, cx, size):
-    """Square crop of `size` centred at (cy, cx), reflect-padded if needed."""
-    half = size // 2
-    r0, r1 = cy - half, cy + half
-    c0, c1 = cx - half, cx + half
-
-    pad_top    = max(0, -r0)
-    pad_bottom = max(0, r1 - img.shape[0])
-    pad_left   = max(0, -c0)
-    pad_right  = max(0, c1 - img.shape[1])
-
-    if pad_top or pad_bottom or pad_left or pad_right:
-        img = np.pad(img,
-                     ((pad_top, pad_bottom), (pad_left, pad_right)),
-                     mode="reflect")
-        cy += pad_top
-        cx += pad_left
-        r0, r1 = cy - half, cy + half
-        c0, c1 = cx - half, cx + half
-
-    return img[r0:r1, c0:c1]
 
 
 # ── data loading ──────────────────────────────────────────────────────────────
@@ -169,7 +104,7 @@ def _extract_patches(raw_dir, metadata_csv, tag):
         n_detections += len(regions)
         for reg in regions:
             cy, cx = int(reg.centroid[0]), int(reg.centroid[1])
-            patch  = _crop_patch(img, cy, cx, PATCH_SIZE)
+            patch  = crop_patch(img, cy, cx, PATCH_SIZE)
             if patch.shape == (PATCH_SIZE, PATCH_SIZE):
                 patches.append(patch)
 

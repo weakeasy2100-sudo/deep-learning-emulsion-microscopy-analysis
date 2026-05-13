@@ -1,52 +1,6 @@
-"""
-V4 — Mixed-Data Training for Improved Robustness.
-
-Trains a new SimpleCNN on patches drawn from all three synthetic datasets:
-  - V1 clean synthetic          (data/patches/)
-  - V2 realistic synthetic      (data/realistic_raw/)
-  - V2.1 high-density realistic (data/high_density_raw/)
-
-Then evaluates both the new mixed model AND the original V1-only model on
-all three test sets, so the improvement in generalisation is directly visible.
-
-Key design decisions
----------------------
-- results/simple_cnn.pth is NEVER touched — the original V1 model is preserved.
-- The new model is saved to results/simple_cnn_mixed.pth.
-- V2 and V2.1 patches are built in-memory (classical detection → crop);
-  data/patches/ is read but never modified.
-- Augmentation (flip, rotation, colour jitter, mild blur) is applied only to
-  training patches; validation and test patches use the plain eval transform.
-- The best-val-accuracy checkpoint is saved during training.
-
-IMPORTANT — pipeline note (same as V3 stress test)
----------------------------------------------------
-V2 and V2.1 accuracy figures reflect the FULL pipeline:
-  classical detection → patch cropping → SimpleCNN classification
-A remaining accuracy gap after mixed training may still be caused by
-classical detector failure on difficult images, not only the CNN.
-
-Prerequisites
--------------
-    python src/generate_data.py
-    python src/classical.py
-    python src/train_classifier.py                          # → simple_cnn.pth
-    python src/generate_realistic_data.py
-    python src/generate_high_density_realistic_data.py
-
-Usage
------
-    python src/train_mixed_classifier.py
-
-Outputs  (no existing file is overwritten)
-------------------------------------------
-results/simple_cnn_mixed.pth
-results/mixed_training_curve.png
-results/mixed_confusion_matrix_v1.png
-results/mixed_confusion_matrix_realistic.png
-results/mixed_confusion_matrix_high_density.png
-results/mixed_accuracy_comparison.png
-results/mixed_prediction_examples.png
+"""Train a new SimpleCNN on V1 + V2 + V2.1 patches for better robustness.
+Saves results/simple_cnn_mixed.pth — does NOT overwrite results/simple_cnn.pth.
+Run: python src/train_mixed_classifier.py
 """
 
 import sys
@@ -75,6 +29,7 @@ from src.classical import detect_droplets, CLASS_ORDER
 from src.dataset   import (make_splits, EmulsionPatchDataset,
                             PATCHES_DIR, CLASS_TO_IDX, IDX_TO_CLASS)
 from src.model     import SimpleCNN, evaluate_model
+from src.utils     import crop_patch
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 PROJECT_ROOT         = Path(__file__).resolve().parent.parent
@@ -109,37 +64,7 @@ _eval_transform = T.Compose([
     T.Normalize(mean=[0.5], std=[0.5]),
 ])
 
-_PIPELINE_NOTE = (
-    "V2 / V2.1 accuracy reflects the full pipeline: "
-    "classical detection → patch cropping → SimpleCNN.\n"
-    "Remaining gaps may include classical detector failure, "
-    "not only CNN domain shift."
-)
-
-
-# ── patch crop (local copy — mirrors dataset.py _crop_patch) ──────────────────
-
-def _crop_patch(img, cy, cx, size):
-    """Square crop of `size` centred at (cy, cx), reflect-padded if needed."""
-    half = size // 2
-    r0, r1 = cy - half, cy + half
-    c0, c1 = cx - half, cx + half
-
-    pad_top    = max(0, -r0)
-    pad_bottom = max(0, r1 - img.shape[0])
-    pad_left   = max(0, -c0)
-    pad_right  = max(0, c1 - img.shape[1])
-
-    if pad_top or pad_bottom or pad_left or pad_right:
-        img = np.pad(img,
-                     ((pad_top, pad_bottom), (pad_left, pad_right)),
-                     mode="reflect")
-        cy += pad_top
-        cx += pad_left
-        r0, r1 = cy - half, cy + half
-        c0, c1 = cx - half, cx + half
-
-    return img[r0:r1, c0:c1]
+_PIPELINE_NOTE = "V2/V2.1 accuracy = full pipeline (detection → crop → CNN), not CNN alone."
 
 
 # ── in-memory dataset ─────────────────────────────────────────────────────────
@@ -185,7 +110,7 @@ def _extract_patches_raw(raw_dir, metadata_csv, tag):
         int_label = CLASS_TO_IDX[row["size_class"]]
         for reg in regions:
             cy, cx = int(reg.centroid[0]), int(reg.centroid[1])
-            patch  = _crop_patch(img, cy, cx, PATCH_SIZE)
+            patch  = crop_patch(img, cy, cx, PATCH_SIZE)
             if patch.shape != (PATCH_SIZE, PATCH_SIZE):
                 continue
             pairs.append((patch, int_label))

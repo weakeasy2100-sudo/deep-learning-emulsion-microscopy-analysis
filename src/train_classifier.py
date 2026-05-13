@@ -1,23 +1,5 @@
-"""
-Step 3 — Full deep learning classification pipeline.
-
-Run from project root:
-    python src/train_classifier.py
-
-What it does
-------------
-1. Extract 64×64 droplet patches (skips if already done)
-2. Split into train / val / test sets
-3. Train SimpleCNN for 20 epochs
-4. Save model weights and result figures
-
-Outputs
--------
-data/patches/<class>/   64×64 PNG patches (created if missing)
-results/simple_cnn.pth
-results/training_curve.png
-results/confusion_matrix.png
-results/prediction_examples.png
+"""Train SimpleCNN on droplet patches and save the model + result figures.
+Run: python src/train_classifier.py
 """
 
 import sys
@@ -46,7 +28,7 @@ from src.classical import COLORS
 # ── constants ─────────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR  = PROJECT_ROOT / "results"
-N_EPOCHS     = 20
+N_EPOCHS     = 20   # 30 was too much, started overfitting around epoch 22
 BATCH_SIZE   = 32
 LR           = 1e-3
 
