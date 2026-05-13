@@ -1,0 +1,10 @@
+numpy>=1.24
+scikit-image>=0.21
+matplotlib>=3.7
+pandas>=2.0
+Pillow>=10.0
+jupyter>=1.0
+ipykernel>=6.0
+torch>=2.0
+torchvision>=0.15
+scikit-learn>=1.3
